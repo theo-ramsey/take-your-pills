@@ -92,7 +92,7 @@ const whereAndWhat = (a) =>
  * appts: appointments dated today or tomorrow; notes: audio_notes rows ({ appointment_id }) for them;
  * sent: reminders_sent rows for `date`. Returns [{ kind, slot, tag, url, title, body }].
  */
-export function appointmentRemindersToSend({ appts, notes = [], sent, date, minutes }) {
+export function appointmentRemindersToSend({ appts, notes = [], sent, date, minutes, name = 'Gloria' }) {
   const tomorrow = addDays(date, 1);
   const alreadySent = new Set(sent.filter((s) => s.local_date === date).map((s) => `${s.time}|${s.kind}`));
   // Only her own voice notes count; a recording the caregiver attached doesn't stop the reminder.
@@ -117,7 +117,7 @@ export function appointmentRemindersToSend({ appts, notes = [], sent, date, minu
     if (after <= QUIET_AFTER && now(after) && !hasNote.has(a.id)) {
       add(
         a, 'appt-note', `How did it go with ${who(a)}?`,
-        'Open My Pills and tap "Record a note" to save what the doctor said.',
+        `Open My Pills and tap "${name} audio note" to save what the doctor said.`,
         `./#record=${a.id}`,
       );
     }

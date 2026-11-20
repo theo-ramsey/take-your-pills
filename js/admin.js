@@ -3,7 +3,8 @@ import * as store from './store.js';
 import { describe } from './drugs.js';
 import { checkPrescriptions } from './checks.js';
 import { formatTime, formatClock, dayReport, dateKey, toMinutes } from './schedule.js';
-import { splitAppointments, apptLine, dayLabel, formatDuration } from './appointments.js';
+import { splitAppointments, apptLine, dayLabel, formatDuration, startsAt } from './appointments.js';
+import { canRecord, startRecording, noteStamp } from './recorder.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
@@ -13,7 +14,7 @@ const f = form.elements;
 const apptDialog = document.getElementById('appt-dialog');
 const apptForm = document.getElementById('appt-form');
 
-const state = { tab: 'schedule', settings: {}, meds: [], log: [], appts: [], audioUrls: {}, editing: null, editingAppt: null };
+const state = { tab: 'schedule', settings: {}, meds: [], log: [], appts: [], audioUrls: {}, editing: null, editingAppt: null, rec: null };
 
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -162,71 +163,101 @@ function refreshAudioUrls() {
     .catch(() => {});
 }
 
+const caregiverName = () => state.settings.caregiver_name || 'Bonnie';
+
 function apptRow(a, now, past) {
-  const notes = (a.audio || [])
+  const notes = [...(a.audio || [])]
+    .sort((x, y) => (x.created_at < y.created_at ? -1 : 1))
     .map((n) => {
       const url = state.audioUrls[n.id];
-      const when = new Date(n.created_at);
       const mine = n.added_by === 'caregiver';
-      const whenText = `${esc(when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))} at ${formatClock(when)}`;
       return `<div class="audio-row">
-        <span class="tag ${mine ? '' : 'green'}">${mine ? 'Your recording' : `${esc(gloria())}'s note`}</span>
+        <span class="tag ${mine ? '' : 'green'}">🎤 ${esc(mine ? caregiverName() : gloria())}</span>
+        <span class="stamp">${esc(noteStamp(n.created_at))}${n.duration_s ? ` · ${formatDuration(n.duration_s)}` : ''}</span>
         ${url ? `<audio controls preload="none" src="${esc(url)}"></audio>` : '<span class="muted">Loading…</span>'}
-        <span class="hint">${mine ? `${n.label ? esc(n.label) + ' · ' : ''}added ${whenText}` : `Recorded ${whenText}`}
-          ${n.duration_s ? ` · ${formatDuration(n.duration_s)}` : ''}</span>
         <button class="abtn quiet" data-action="delete-note" data-appt="${esc(a.id)}" data-id="${esc(n.id)}">Delete</button>
       </div>`;
     })
     .join('');
+  const canRecord = past || now >= startsAt(a);
   return `<div class="entry">
     <span class="t wide">${esc(dayLabel(a.date, now))}<br><span class="muted">${formatTime(a.time)}</span></span>
     <span class="w"><b>${esc(apptLine(a))}</b>
       ${a.place ? `<div class="hint">📍 ${esc(a.place)}</div>` : ''}
       ${a.details ? `<div class="hint">Note for ${esc(gloria())}: ${esc(a.details)}</div>` : ''}
       ${notes}
-      ${past && !(a.audio || []).some((n) => n.added_by !== 'caregiver') ? `<div class="hint">No voice note from ${esc(gloria())} yet.</div>` : ''}
-      ${past ? `<label class="abtn attach-btn">＋ Attach a recording
-          <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.caf" data-attach="${esc(a.id)}" hidden></label>` : ''}
+      ${canRecord ? recordControls(a) : ''}
     </span>
     <button class="abtn" data-action="edit-appt" data-id="${esc(a.id)}">Edit</button>
   </div>`;
 }
 
-// Bonnie attaches an audio file (e.g. a Voice Memo she made at the appointment).
-document.addEventListener('change', async (ev) => {
-  const input = ev.target.closest('input[data-attach]');
-  if (!input) return;
-  const file = input.files[0];
-  const appt = state.appts.find((a) => a.id === input.dataset.attach);
-  input.value = '';
-  if (!file || !appt) return;
-  toast('Uploading…');
-  try {
-    const row = await store.attachAudio(appt, file, await audioLength(file));
-    appt.audio = [...(appt.audio || []), row];
-    toast(`Attached. ${gloria()} can play it under Appointments.`);
-    refreshAudioUrls();
-    render();
-  } catch (err) {
-    alert('Could not attach the recording: ' + err.message);
+function recordControls(a) {
+  const r = state.rec;
+  if (r && r.apptId === a.id) {
+    if (r.phase === 'starting') return `<div class="rec-inline">Starting the microphone… If the browser asks, click <b>Allow</b>.</div>`;
+    if (r.phase === 'saving') return `<div class="rec-inline">Saving…</div>`;
+    return `<div class="rec-inline"><span class="dot" aria-hidden="true"></span> Recording
+      <span id="admin-rec-time">${formatDuration((Date.now() - r.startedAt) / 1000)}</span>
+      <button class="abtn primary" data-action="admin-rec-done">✓ Done</button>
+      <button class="abtn quiet" data-action="admin-rec-cancel">Cancel</button></div>`;
   }
-});
+  return `<button class="abtn primary rec-start" data-action="admin-rec" data-id="${esc(a.id)}" ${r ? 'disabled' : ''}>
+    🎤 ${esc(caregiverName())} audio note</button>`;
+}
 
-/** Length of an audio file in seconds, or null if the browser can't tell. */
-function audioLength(file) {
-  return new Promise((resolve) => {
-    const url = URL.createObjectURL(file);
-    const el = new Audio();
-    const done = (v) => {
-      URL.revokeObjectURL(url);
-      resolve(Number.isFinite(v) && v > 0 ? v : null);
-    };
-    el.preload = 'metadata';
-    el.onloadedmetadata = () => done(el.duration);
-    el.onerror = () => done(null);
-    setTimeout(() => done(null), 5000);
-    el.src = url;
-  });
+// Bonnie records an audio note right in the page (on her phone or computer).
+async function adminRecStart(appt) {
+  if (state.rec) return;
+  if (!canRecord()) return alert("This browser can't record audio. Try Safari on an iPhone or Chrome on a computer.");
+  const r = { apptId: appt.id, phase: 'starting' };
+  state.rec = r;
+  render();
+  try {
+    r.ctl = await startRecording({
+      onTick: (s) => {
+        const el = document.getElementById('admin-rec-time');
+        if (el) el.textContent = formatDuration(s);
+      },
+      onAutoStop: () => adminRecDone(),
+    });
+    if (state.rec !== r) return r.ctl.cancel();
+    Object.assign(r, { phase: 'recording', startedAt: r.ctl.startedAt });
+  } catch {
+    state.rec = null;
+    alert('The microphone is not allowed. Allow it for this site in the browser settings, then try again.');
+  }
+  render();
+}
+
+async function adminRecDone() {
+  const r = state.rec;
+  if (!r?.ctl || r.phase !== 'recording') return;
+  r.phase = 'saving';
+  render();
+  const { blob, seconds } = await r.ctl.finish();
+  const appt = state.appts.find((a) => a.id === r.apptId);
+  for (;;) {
+    try {
+      if (!blob.size) throw new Error('nothing was recorded');
+      const row = await store.saveCaregiverRecording(appt, blob, seconds);
+      appt.audio = [...(appt.audio || []), row];
+      state.audioUrls[row.id] = URL.createObjectURL(blob);
+      toast(`Saved. ${gloria()} can listen to it under Appointments.`);
+      refreshAudioUrls();
+      break;
+    } catch (err) {
+      if (!blob.size || !confirm(`Could not save the recording (${err.message}). Try again?`)) break;
+    }
+  }
+  state.rec = null;
+  render();
+}
+
+function adminRecCancel() {
+  state.rec?.ctl?.cancel();
+  state.rec = null;
+  render();
 }
 
 function renderAppointments() {
@@ -238,11 +269,11 @@ function renderAppointments() {
     <div class="card">
       ${upcoming.length ? upcoming.map((a) => apptRow(a, now, false)).join('') : '<p class="muted" style="margin:0">No appointments coming up.</p>'}
     </div>
-    <h2>Past appointments and ${esc(gloria())}'s voice notes</h2>
+    <h2>Past appointments and audio notes</h2>
     <div class="card">
       ${past.length ? past.map((a) => apptRow(a, now, true)).join('') : '<p class="muted" style="margin:0">None yet.</p>'}
     </div>
-    <p class="hint">${esc(gloria())} records a voice note on her phone after each appointment. They appear here.</p>`;
+    <p class="hint">After an appointment, tap the green button to record an audio note. ${esc(gloria())} records hers on her phone. You can both listen to each other's notes.</p>`;
 }
 
 function openAppt(a) {
@@ -265,7 +296,7 @@ document.getElementById('appt-delete').addEventListener('click', async () => {
   const a = state.editingAppt;
   if (!a) return;
   const n = (a.audio || []).length;
-  if (!confirm(`Delete this appointment${n ? ` and ${gloria()}'s ${n === 1 ? 'voice note' : n + ' voice notes'}` : ''}? This can't be undone.`)) return;
+  if (!confirm(`Delete this appointment${n ? ` and its ${n === 1 ? 'audio note' : n + ' audio notes'}` : ''}? This can't be undone.`)) return;
   try {
     await store.deleteAppointment(a);
     state.appts = state.appts.filter((x) => x.id !== a.id);
@@ -532,16 +563,20 @@ document.addEventListener('click', async (ev) => {
   if (!el) return;
   const { action, id } = el.dataset;
   switch (action) {
+    case 'admin-rec': return adminRecStart(state.appts.find((a) => a.id === id));
+    case 'admin-rec-done': return adminRecDone();
+    case 'admin-rec-cancel': return adminRecCancel();
     case 'add-appt': return openAppt(null);
     case 'edit-appt': return openAppt(state.appts.find((a) => a.id === id));
     case 'delete-note': {
       const appt = state.appts.find((a) => a.id === el.dataset.appt);
       const note = appt?.audio.find((n) => n.id === id);
-      if (!note || !confirm(`Delete this voice note? ${gloria()} won't be able to play it any more. This can't be undone.`)) return;
+      const whose = note?.added_by === 'caregiver' ? 'your' : `${gloria()}'s`;
+      if (!note || !confirm(`Delete ${whose} audio note from ${noteStamp(note.created_at)}? This can't be undone.`)) return;
       try {
         await store.deleteAudioNote(note);
         appt.audio = appt.audio.filter((n) => n.id !== id);
-        toast('Voice note deleted');
+        toast('Audio note deleted');
       } catch (err) {
         alert('Could not delete: ' + err.message);
       }

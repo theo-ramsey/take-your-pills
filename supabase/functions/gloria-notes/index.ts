@@ -2,6 +2,7 @@
 // Her phone has no login, only the setup code, so it can't use storage directly.
 //   POST multipart (code, id, appointment_id, duration_s, file) -> saves a note
 //   POST JSON { action: 'urls', code }                       -> { urls: { noteId: playableUrl } }
+//   POST JSON { action: 'delete', code, id }                 -> deletes one of HER notes
 // Deploy with --no-verify-jwt: the setup code is the check.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 
@@ -52,6 +53,20 @@ Deno.serve(async (req) => {
     if (e2) return json({ error: e2.message }, 500);
     const byPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));
     return json({ urls: Object.fromEntries(rows.map((r) => [r.id, byPath.get(r.path)]).filter(([, u]) => u)) });
+  }
+
+  if (!form && body.action === 'delete') {
+    // She can delete only her own notes, not ones the caregiver recorded.
+    const id = String(body.id ?? '');
+    if (!UUID.test(id)) return json({ error: 'bad id' }, 400);
+    const { data: note } = await sb.from('audio_notes').select('id, path, added_by').eq('id', id).maybeSingle();
+    if (!note) return json({ ok: true }); // already gone
+    if (note.added_by === 'caregiver') return json({ error: "that note isn't yours to delete" }, 403);
+    const rm = await sb.storage.from(BUCKET).remove([note.path]);
+    if (rm.error) return json({ error: rm.error.message }, 500);
+    const del = await sb.from('audio_notes').delete().eq('id', id);
+    if (del.error) return json({ error: del.error.message }, 500);
+    return json({ ok: true });
   }
 
   if (form) {

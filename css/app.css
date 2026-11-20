@@ -178,7 +178,12 @@ button.appt-card { font-size: inherit; cursor: pointer; }
 .note-ask .appt-when { font-size: 20px; font-weight: 600; color: var(--muted); }
 .two-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .two-btns .btn { margin: 4px 0; padding: 10px; }
-.btn.play { margin: 10px 0 0; }
+.notes-list { margin-top: 12px; }
+.note-row { border-top: 1px solid var(--line); padding: 10px 0 4px; }
+.note-title { font-size: 20px; }
+.note-btns { display: grid; grid-template-columns: 2fr 1fr; gap: 8px; }
+.note-btns .btn { margin: 8px 0 0; min-height: 54px; padding: 8px; }
+.note-btns .btn:only-child { grid-column: 1 / -1; }
 .btn .dur { font-weight: 500; opacity: 0.85; }
 .rec-btn { min-height: 96px; font-size: 30px; }
 .rec-live {
@@ -284,7 +289,11 @@ dialog h2 { margin-top: 0 !important; }
 .entry .t.wide { flex-basis: 150px; color: var(--text); font-weight: 600; }
 .audio-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .audio-row audio { height: 36px; max-width: 100%; }
-.admin label.attach-btn { display: inline-flex; align-items: center; margin-top: 8px; cursor: pointer; font-size: 15px; }
+.audio-row .stamp { font-size: 14px; color: var(--muted); }
+.rec-start { margin-top: 10px; }
+.rec-inline { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; font-weight: 700; color: var(--red); }
+.rec-inline #admin-rec-time { color: var(--text); font-variant-numeric: tabular-nums; }
+.rec-inline .dot { width: 14px; height: 14px; border-radius: 50%; background: var(--red); animation: pulse 1.2s infinite; }
 .code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; letter-spacing: 3px;
   background: #fff; border: 2px dashed var(--line); border-radius: 12px; padding: 10px 14px; display: inline-block;

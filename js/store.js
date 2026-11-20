@@ -198,6 +198,19 @@ export async function saveAudioNote({ id, appointment_id, blob, duration_s }) {
   if (error) throw await functionError(error);
 }
 
+/** Gloria deletes one of her own audio notes. */
+export async function deleteOwnAudioNote(id) {
+  if (isDemo) {
+    const d = demoData();
+    d.audio = d.audio.filter((n) => !(n.id === id && n.added_by !== 'caregiver'));
+    saveDemo(d);
+    return;
+  }
+  const sb = await client();
+  const { error } = await sb.functions.invoke('gloria-notes', { body: { action: 'delete', code: deviceCode.get(), id } });
+  if (error) throw await functionError(error);
+}
+
 /** Playable links for all her voice notes: { noteId: url }. */
 export async function audioNoteUrls() {
   if (isDemo) return Object.fromEntries(demoData().audio.map((n) => [n.id, n.url]));
@@ -291,6 +304,12 @@ export async function deleteAudioNote(note) {
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 const AUDIO_TYPES = { m4a: 'audio/mp4', mp4: 'audio/mp4', aac: 'audio/aac', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', webm: 'audio/webm', caf: 'audio/x-caf' };
+
+/** Bonnie saves an audio note she recorded (a Blob from the recorder). Returns the new audio_notes row. */
+export function saveCaregiverRecording(appt, blob, duration_s) {
+  const ext = /webm/.test(blob.type) ? 'webm' : /ogg/.test(blob.type) ? 'ogg' : 'm4a';
+  return attachAudio(appt, new File([blob], `audio-note.${ext}`, { type: blob.type || 'audio/mp4' }), duration_s);
+}
 
 /** Bonnie attaches an audio file to an appointment. Returns the new audio_notes row. */
 export async function attachAudio(appt, file, duration_s) {

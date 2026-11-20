@@ -1,9 +1,9 @@
 // Service worker: shows reminder notifications and lets the app open without internet.
-const CACHE = 'typ-v2';
+const CACHE = 'typ-v3';
 const FILES = [
   './', 'index.html', 'admin.html', 'css/app.css', 'manifest.webmanifest',
   'js/gloria.js', 'js/admin.js', 'js/store.js', 'js/config.js', 'js/drugs.js', 'js/checks.js',
-  'js/schedule.js', 'js/examples.js', 'js/appointments.js', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
+  'js/schedule.js', 'js/examples.js', 'js/appointments.js', 'js/recorder.js', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {

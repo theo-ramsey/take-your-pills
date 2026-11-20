@@ -37,7 +37,7 @@ Deno.serve(async (req) => {
     ...remindersToSend({
       meds: meds.data ?? [], log: log.data ?? [], sent: sent.data ?? [], date, minutes, name: settings.gloria_name,
     }).map((r) => ({ ...r, slot: r.time, tag: `${date}-${r.time}`, url: './' })),
-    ...appointmentRemindersToSend({ appts: appts.data ?? [], notes: notes.data ?? [], sent: sent.data ?? [], date, minutes }),
+    ...appointmentRemindersToSend({ appts: appts.data ?? [], notes: notes.data ?? [], sent: sent.data ?? [], date, minutes, name: settings.gloria_name }),
   ];
 
   const results: string[] = [];
