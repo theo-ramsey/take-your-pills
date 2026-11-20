@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pill Schedule</title>
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body class="admin">
+  <header class="bar">
+    <div class="inner">
+      <h1 id="title">Medicine schedule</h1>
+      <nav id="nav" hidden>
+        <button data-tab="schedule" class="active">Schedule</button>
+        <button data-tab="history">History</button>
+        <button data-tab="settings">Settings</button>
+        <button data-action="sign-out" id="sign-out">Sign out</button>
+      </nav>
+    </div>
+  </header>
+  <main id="main"><p>Loading…</p></main>
+
+  <dialog id="med-dialog">
+    <form id="med-form" method="dialog">
+      <h2 id="med-dialog-title">Medicine</h2>
+      <div class="form-grid">
+        <div class="full">
+          <label for="f-name">Name (brand or generic)</label>
+          <input type="text" id="f-name" name="name" required autocomplete="off" placeholder="e.g. Eliquis">
+          <div class="hint" id="f-name-hint"></div>
+        </div>
+        <div>
+          <label for="f-strength">Strength</label>
+          <input type="text" id="f-strength" name="strength" placeholder="e.g. 5 mg">
+        </div>
+        <div>
+          <label for="f-amount">How many to take</label>
+          <input type="text" id="f-amount" name="amount" placeholder="e.g. 1 tablet">
+        </div>
+        <div class="full">
+          <label class="check-row"><input type="checkbox" id="f-as-needed" name="as_needed"> Only when needed (no set times)</label>
+        </div>
+        <div class="full" id="times-wrap">
+          <label>Times of day</label>
+          <div class="times" id="f-times"></div>
+          <div class="hint">Reminders are sent at these times, in Gloria's time zone.</div>
+        </div>
+        <div id="max-wrap" hidden>
+          <label for="f-max">Most doses in 24 hours</label>
+          <input type="number" id="f-max" name="max_per_day" min="1" max="24" placeholder="e.g. 3">
+        </div>
+        <div class="full">
+          <label for="f-purpose">What it's for</label>
+          <input type="text" id="f-purpose" name="purpose" placeholder="e.g. Blood pressure">
+        </div>
+        <div class="full">
+          <label for="f-appearance">What it looks like</label>
+          <input type="text" id="f-appearance" name="appearance" placeholder="e.g. Small pink round pill">
+        </div>
+        <div class="full">
+          <label for="f-instructions">Special instructions</label>
+          <input type="text" id="f-instructions" name="instructions" placeholder="e.g. Take with food">
+        </div>
+        <div class="full">
+          <label class="check-row"><input type="checkbox" id="f-active" name="active" checked> Currently taking</label>
+        </div>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button type="button" class="abtn danger" id="med-delete">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="abtn" id="med-cancel">Cancel</button>
+        <button type="submit" class="abtn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script type="module" src="js/admin.js"></script>
+</body>
+</html>
