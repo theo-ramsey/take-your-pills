@@ -89,10 +89,12 @@ create table if not exists audio_notes (
   created_at timestamptz not null default now()
 );
 create index if not exists audio_notes_appointment on audio_notes (appointment_id);
+alter table audio_notes add column if not exists added_by text not null default 'gloria';  -- 'gloria' or 'caregiver'
+alter table audio_notes add column if not exists label text not null default '';           -- file name, for uploads
 
 insert into storage.buckets (id, name, public, file_size_limit)
-values ('audio-notes', 'audio-notes', false, 26214400)
-on conflict (id) do nothing;
+values ('audio-notes', 'audio-notes', false, 52428800)
+on conflict (id) do update set file_size_limit = excluded.file_size_limit;
 
 -- ---------------------------------------------------------------- security
 alter table settings enable row level security;
@@ -126,6 +128,9 @@ create policy caregivers_all on audio_notes for all to authenticated using (is_c
 drop policy if exists audio_notes_caregivers_read on storage.objects;
 create policy audio_notes_caregivers_read on storage.objects for select to authenticated
   using (bucket_id = 'audio-notes' and public.is_caregiver());
+drop policy if exists audio_notes_caregivers_upload on storage.objects;
+create policy audio_notes_caregivers_upload on storage.objects for insert to authenticated
+  with check (bucket_id = 'audio-notes' and public.is_caregiver());
 drop policy if exists audio_notes_caregivers_delete on storage.objects;
 create policy audio_notes_caregivers_delete on storage.objects for delete to authenticated
   using (bucket_id = 'audio-notes' and public.is_caregiver());
@@ -161,7 +166,8 @@ begin
     'appointments', coalesce((select json_agg(json_build_object(
         'id', a.id, 'date', a.date, 'time', a.time, 'doctor', a.doctor, 'purpose', a.purpose,
         'place', a.place, 'details', a.details,
-        'audio', coalesce((select json_agg(json_build_object('id', n.id, 'created_at', n.created_at, 'duration_s', n.duration_s)
+        'audio', coalesce((select json_agg(json_build_object('id', n.id, 'created_at', n.created_at, 'duration_s', n.duration_s,
+                                                     'added_by', n.added_by)
                                     order by n.created_at) from audio_notes n where n.appointment_id = a.id), '[]'::json)
       ) order by a.date, a.time) from appointments a), '[]'::json)
   );

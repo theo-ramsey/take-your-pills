@@ -167,9 +167,12 @@ function apptRow(a, now, past) {
     .map((n) => {
       const url = state.audioUrls[n.id];
       const when = new Date(n.created_at);
+      const mine = n.added_by === 'caregiver';
+      const whenText = `${esc(when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))} at ${formatClock(when)}`;
       return `<div class="audio-row">
+        <span class="tag ${mine ? '' : 'green'}">${mine ? 'Your recording' : `${esc(gloria())}'s note`}</span>
         ${url ? `<audio controls preload="none" src="${esc(url)}"></audio>` : '<span class="muted">Loading…</span>'}
-        <span class="hint">Recorded ${esc(when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))} at ${formatClock(when)}
+        <span class="hint">${mine ? `${n.label ? esc(n.label) + ' · ' : ''}added ${whenText}` : `Recorded ${whenText}`}
           ${n.duration_s ? ` · ${formatDuration(n.duration_s)}` : ''}</span>
         <button class="abtn quiet" data-action="delete-note" data-appt="${esc(a.id)}" data-id="${esc(n.id)}">Delete</button>
       </div>`;
@@ -181,10 +184,47 @@ function apptRow(a, now, past) {
       ${a.place ? `<div class="hint">📍 ${esc(a.place)}</div>` : ''}
       ${a.details ? `<div class="hint">Note for ${esc(gloria())}: ${esc(a.details)}</div>` : ''}
       ${notes}
-      ${past && !notes ? `<div class="hint">No voice note yet.</div>` : ''}
+      ${past && !(a.audio || []).some((n) => n.added_by !== 'caregiver') ? `<div class="hint">No voice note from ${esc(gloria())} yet.</div>` : ''}
+      ${past ? `<button class="abtn" style="margin-top:8px" data-action="attach" data-id="${esc(a.id)}">＋ Attach a recording</button>` : ''}
     </span>
     <button class="abtn" data-action="edit-appt" data-id="${esc(a.id)}">Edit</button>
   </div>`;
+}
+
+// Bonnie attaches an audio file (e.g. a Voice Memo she made at the appointment).
+const attachInput = document.getElementById('attach-input');
+attachInput.addEventListener('change', async () => {
+  const file = attachInput.files[0];
+  const appt = state.appts.find((a) => a.id === state.attachTo);
+  attachInput.value = '';
+  if (!file || !appt) return;
+  toast('Uploading…');
+  try {
+    const row = await store.attachAudio(appt, file, await audioLength(file));
+    appt.audio = [...(appt.audio || []), row];
+    toast(`Attached. ${gloria()} can play it under Appointments.`);
+    refreshAudioUrls();
+    render();
+  } catch (err) {
+    alert('Could not attach the recording: ' + err.message);
+  }
+});
+
+/** Length of an audio file in seconds, or null if the browser can't tell. */
+function audioLength(file) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const el = new Audio();
+    const done = (v) => {
+      URL.revokeObjectURL(url);
+      resolve(Number.isFinite(v) && v > 0 ? v : null);
+    };
+    el.preload = 'metadata';
+    el.onloadedmetadata = () => done(el.duration);
+    el.onerror = () => done(null);
+    setTimeout(() => done(null), 5000);
+    el.src = url;
+  });
 }
 
 function renderAppointments() {
@@ -490,6 +530,9 @@ document.addEventListener('click', async (ev) => {
   if (!el) return;
   const { action, id } = el.dataset;
   switch (action) {
+    case 'attach':
+      state.attachTo = id;
+      return attachInput.click();
     case 'add-appt': return openAppt(null);
     case 'edit-appt': return openAppt(state.appts.find((a) => a.id === id));
     case 'delete-note': {

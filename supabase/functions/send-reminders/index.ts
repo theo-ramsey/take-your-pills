@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
   ]);
   const apptIds = (appts.data ?? []).map((a) => a.id);
   const notes = apptIds.length
-    ? await sb.from('audio_notes').select('appointment_id').in('appointment_id', apptIds)
+    ? await sb.from('audio_notes').select('appointment_id, added_by').in('appointment_id', apptIds)
     : { data: [] };
 
   const reminders = [

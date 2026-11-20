@@ -288,6 +288,44 @@ export async function deleteAudioNote(note) {
   check(await sb.from('audio_notes').delete().eq('id', note.id));
 }
 
+export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+
+const AUDIO_TYPES = { m4a: 'audio/mp4', mp4: 'audio/mp4', aac: 'audio/aac', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', webm: 'audio/webm', caf: 'audio/x-caf' };
+
+/** Bonnie attaches an audio file to an appointment. Returns the new audio_notes row. */
+export async function attachAudio(appt, file, duration_s) {
+  const ext = (file.name.match(/\.([a-z0-9]+)$/i)?.[1] || 'm4a').toLowerCase();
+  const mime = (file.type || AUDIO_TYPES[ext] || 'audio/mp4').split(';')[0];
+  if (!mime.startsWith('audio/') && !mime.startsWith('video/mp4')) throw new Error('That file is not an audio recording.');
+  if (file.size > MAX_UPLOAD_BYTES) throw new Error('That recording is over 50 MB. Try a shorter or compressed one.');
+  const id = uuid();
+  const row = {
+    id, appointment_id: appt.id, path: `${appt.id}/${id}.${ext}`, mime, duration_s: duration_s ? Math.round(duration_s) : null,
+    added_by: 'caregiver', label: file.name.slice(0, 200), created_at: new Date().toISOString(),
+  };
+  if (isDemo) {
+    const url = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+    const d = demoData();
+    d.audio.push({ ...row, url });
+    localStorage.setItem(DEMO_KEY, JSON.stringify(d)); // throws if the browser is out of room
+    return row;
+  }
+  const sb = await client();
+  check(await sb.storage.from('audio-notes').upload(row.path, file, { contentType: mime }));
+  const { created_at, ...insert } = row;
+  try {
+    return check(await sb.from('audio_notes').insert(insert).select().single());
+  } catch (err) {
+    await sb.storage.from('audio-notes').remove([row.path]);
+    throw err;
+  }
+}
+
 /** Playable links for voice notes, for Bonnie: { noteId: url }. */
 export async function adminAudioUrls(appointments) {
   if (isDemo) return Object.fromEntries(demoData().audio.map((n) => [n.id, n.url]));

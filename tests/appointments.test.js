@@ -58,6 +58,15 @@ test('asks for a note 30 minutes after it starts, for 3 days, until there is one
   assert.deepEqual(needsNote([today], new Date(2026, 10, 24, 11, 0)), []);
 });
 
+test("a recording the caregiver attached doesn't count as her note", () => {
+  const withBonnies = { ...today, audio: [{ id: 'b', added_by: 'caregiver' }] };
+  assert.deepEqual(needsNote([withBonnies], new Date(2026, 10, 20, 11, 0)).map((a) => a.id), [today.id]);
+  const r = appointmentRemindersToSend({
+    appts: [today], notes: [{ appointment_id: today.id, added_by: 'caregiver' }], sent: [], date, minutes: 11 * 60 + 30,
+  });
+  assert.deepEqual(r.map((x) => x.kind), ['appt-note']);
+});
+
 test('history groups doses and past appointments by day, newest first', () => {
   const now = new Date(2026, 10, 21, 18, 0);
   const entries = [

@@ -9,7 +9,7 @@ import { itemFromMed, itemFromText, checkBasket } from './checks.js';
 import { suggest } from './drugs.js';
 import {
   splitAppointments, nextAppointment, needsNote, apptName, apptLine, apptWhen, dayLabel, formatDuration,
-  historyDays, startsAt,
+  historyDays, startsAt, ownNotes,
 } from './appointments.js';
 
 const app = document.getElementById('app');
@@ -324,24 +324,27 @@ function placeLine(a) {
 
 /** Play buttons for an appointment's voice notes. */
 function noteButtons(a) {
-  return (a.audio || [])
-    .map((n, i) => {
-      const on = state.playing === n.id;
-      const url = state.audioUrls[n.id];
-      const many = a.audio.length > 1 ? ` ${i + 1}` : '';
-      const dur = n.duration_s ? ` <span class="dur">${formatDuration(n.duration_s)}</span>` : '';
-      if (!url) {
-        const why = state.urlsStatus === 'error' ? 'needs internet to play' : 'loading…';
-        return `<button class="btn secondary small play" disabled>▶ Note${many} (${why})</button>`;
-      }
-      return `<button class="btn ${on ? 'secondary' : 'blue'} small play" data-action="play" data-id="${esc(n.id)}">
-        ${on ? '■ Stop' : `▶ Play your note${many}`}${dur}</button>`;
-    })
-    .join('');
+  const own = ownNotes(a);
+  const theirs = (a.audio || []).filter((n) => n.added_by === 'caregiver');
+  const button = (n, label) => {
+    const on = state.playing === n.id;
+    const url = state.audioUrls[n.id];
+    const dur = n.duration_s ? ` <span class="dur">${formatDuration(n.duration_s)}</span>` : '';
+    if (!url) {
+      const why = state.urlsStatus === 'error' ? 'needs internet to play' : 'loading…';
+      return `<button class="btn secondary small play" disabled>▶ ${label} (${why})</button>`;
+    }
+    return `<button class="btn ${on ? 'secondary' : 'blue'} small play" data-action="play" data-id="${esc(n.id)}">
+      ${on ? '■ Stop' : `▶ ${label}`}${dur}</button>`;
+  };
+  return [
+    ...own.map((n, i) => button(n, `Play your note${own.length > 1 ? ` ${i + 1}` : ''}`)),
+    ...theirs.map((n, i) => button(n, `Play ${esc(caregiver())}'s recording${theirs.length > 1 ? ` ${i + 1}` : ''}`)),
+  ].join('');
 }
 
 function apptCard(a, now, { past = false } = {}) {
-  const hasNotes = (a.audio || []).length > 0;
+  const hasNotes = ownNotes(a).length > 0;
   const canRecord = past || now >= startsAt(a);
   return `<div class="card appt-card">
     <span class="appt-when">${esc(apptWhen(a, now))}</span>

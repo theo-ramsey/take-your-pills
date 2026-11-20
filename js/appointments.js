@@ -57,11 +57,14 @@ export function nextAppointment(appts, now = new Date(), days = 14) {
   return upcoming.find((a) => startsAt(a).getTime() <= limit) || null;
 }
 
-/** Recent appointments that have started and have no voice note yet, newest first. */
+/** Voice notes Gloria recorded herself (not recordings the caregiver attached). */
+export const ownNotes = (a) => (a.audio || []).filter((n) => n.added_by !== 'caregiver');
+
+/** Recent appointments that have started and have no voice note from her yet, newest first. */
 export function needsNote(appts, now = new Date()) {
   const t = now.getTime();
   return appts
-    .filter((a) => !(a.audio || []).length)
+    .filter((a) => !ownNotes(a).length)
     .filter((a) => {
       const s = startsAt(a).getTime();
       return t >= s + NOTE_PROMPT_AFTER * 60000 && t <= s + NOTE_PROMPT_DAYS * 86400000;

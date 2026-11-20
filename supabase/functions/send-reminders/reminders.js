@@ -95,7 +95,8 @@ const whereAndWhat = (a) =>
 export function appointmentRemindersToSend({ appts, notes = [], sent, date, minutes }) {
   const tomorrow = addDays(date, 1);
   const alreadySent = new Set(sent.filter((s) => s.local_date === date).map((s) => `${s.time}|${s.kind}`));
-  const hasNote = new Set(notes.map((n) => n.appointment_id));
+  // Only her own voice notes count; a recording the caregiver attached doesn't stop the reminder.
+  const hasNote = new Set(notes.filter((n) => n.added_by !== 'caregiver').map((n) => n.appointment_id));
   const now = (at) => minutes >= at && minutes < at + DUE_WINDOW;
   const out = [];
   const add = (a, kind, title, body, url = './') => {
