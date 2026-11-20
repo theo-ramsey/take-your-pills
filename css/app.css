@@ -284,6 +284,7 @@ dialog h2 { margin-top: 0 !important; }
 .entry .t.wide { flex-basis: 150px; color: var(--text); font-weight: 600; }
 .audio-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
 .audio-row audio { height: 36px; max-width: 100%; }
+.attach-btn { display: inline-flex; align-items: center; margin-top: 8px; cursor: pointer; font-size: 15px; }
 .code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; letter-spacing: 3px;
   background: #fff; border: 2px dashed var(--line); border-radius: 12px; padding: 10px 14px; display: inline-block;

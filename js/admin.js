@@ -185,18 +185,20 @@ function apptRow(a, now, past) {
       ${a.details ? `<div class="hint">Note for ${esc(gloria())}: ${esc(a.details)}</div>` : ''}
       ${notes}
       ${past && !(a.audio || []).some((n) => n.added_by !== 'caregiver') ? `<div class="hint">No voice note from ${esc(gloria())} yet.</div>` : ''}
-      ${past ? `<button class="abtn" style="margin-top:8px" data-action="attach" data-id="${esc(a.id)}">＋ Attach a recording</button>` : ''}
+      ${past ? `<label class="abtn attach-btn">＋ Attach a recording
+          <input type="file" accept="audio/*,.m4a,.mp3,.wav,.aac,.caf" data-attach="${esc(a.id)}" hidden></label>` : ''}
     </span>
     <button class="abtn" data-action="edit-appt" data-id="${esc(a.id)}">Edit</button>
   </div>`;
 }
 
 // Bonnie attaches an audio file (e.g. a Voice Memo she made at the appointment).
-const attachInput = document.getElementById('attach-input');
-attachInput.addEventListener('change', async () => {
-  const file = attachInput.files[0];
-  const appt = state.appts.find((a) => a.id === state.attachTo);
-  attachInput.value = '';
+document.addEventListener('change', async (ev) => {
+  const input = ev.target.closest('input[data-attach]');
+  if (!input) return;
+  const file = input.files[0];
+  const appt = state.appts.find((a) => a.id === input.dataset.attach);
+  input.value = '';
   if (!file || !appt) return;
   toast('Uploading…');
   try {
@@ -530,9 +532,6 @@ document.addEventListener('click', async (ev) => {
   if (!el) return;
   const { action, id } = el.dataset;
   switch (action) {
-    case 'attach':
-      state.attachTo = id;
-      return attachInput.click();
     case 'add-appt': return openAppt(null);
     case 'edit-appt': return openAppt(state.appts.find((a) => a.id === id));
     case 'delete-note': {
