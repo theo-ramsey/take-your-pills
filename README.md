@@ -12,6 +12,9 @@ A very simple medicine app for Gloria, with a schedule Bonnie can edit from any 
   - a known interaction with her prescriptions or with something she took earlier that day (for example Advil with Eliquis, NyQuil with Tylenol, or Tums with levothyroxine)
 - **Bonnie's page** (`admin.html`) is where Bonnie adds, changes or stops medicines and times. It also shows the last 14 days of history, including missed doses and any warnings Gloria went ahead past. It flags interactions between prescribed medicines so Bonnie can ask the doctor about them.
 - **Reminders** arrive as notifications on her iPhone at each dose time, and again 30 minutes later if she hasn't logged it. iPhone notifications also show up on her Apple Watch.
+- **Appointments**: Bonnie adds medical appointments on her page. Gloria sees the next one on her screen and gets reminders at 4 PM the day before and 2 hours before (never before 7 AM).
+- **Voice notes**: an hour after an appointment starts, Gloria is reminded to record a voice note about it. She can play her notes back any time, and Bonnie can listen to them on her page.
+- **History**: Gloria can look back through every medicine she logged and every past appointment, newest first.
 
 > The interaction list (`js/drugs.js`) is hand-written. It covers common medicines and the most important combinations for older adults, but it is not complete and is not medical advice. Anything the app doesn't recognise tells her to ask the pharmacist.
 
@@ -64,6 +67,7 @@ npx supabase login
 npx supabase link --project-ref YOUR-PROJECT-REF
 npx supabase secrets set VAPID_PUBLIC_KEY=... VAPID_PRIVATE_KEY=... VAPID_SUBJECT=mailto:you@example.com CRON_SECRET=pick-a-long-random-password
 npx supabase functions deploy send-reminders --no-verify-jwt
+npx supabase functions deploy gloria-notes --no-verify-jwt
 ```
 `YOUR-PROJECT-REF` is the part of the Project URL before `.supabase.co`.
 

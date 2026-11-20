@@ -69,3 +69,57 @@ export function remindersToSend({ meds, log, sent, date, minutes, name = '' }) {
   }
   return out;
 }
+
+// ---------------------------------------------------------------- appointments
+export const APPT_DAY_BEFORE_AT = 16 * 60; // 4:00 PM the day before
+export const APPT_SOON_BEFORE = 120;       // 2 hours before
+export const APPT_NOTE_AFTER = 60;         // 1 hour after it starts, ask for a voice note
+export const QUIET_BEFORE = 7 * 60;        // no reminders before 7:00 AM...
+export const QUIET_AFTER = 21 * 60;        // ...or after 9:00 PM
+
+/** 'YYYY-MM-DD' plus n days. */
+export function addDays(date, n) {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+const who = (a) => a.doctor || a.purpose || 'your appointment';
+const whereAndWhat = (a) =>
+  [a.doctor && a.purpose ? `${a.doctor} (${a.purpose})` : who(a), a.place && `at ${a.place}`].filter(Boolean).join(' ');
+
+/**
+ * appts: appointments dated today or tomorrow; notes: audio_notes rows ({ appointment_id }) for them;
+ * sent: reminders_sent rows for `date`. Returns [{ kind, slot, tag, url, title, body }].
+ */
+export function appointmentRemindersToSend({ appts, notes = [], sent, date, minutes }) {
+  const tomorrow = addDays(date, 1);
+  const alreadySent = new Set(sent.filter((s) => s.local_date === date).map((s) => `${s.time}|${s.kind}`));
+  const hasNote = new Set(notes.map((n) => n.appointment_id));
+  const now = (at) => minutes >= at && minutes < at + DUE_WINDOW;
+  const out = [];
+  const add = (a, kind, title, body, url = './') => {
+    if (!alreadySent.has(`${a.id}|${kind}`)) out.push({ kind, slot: a.id, tag: `appt-${a.id}-${kind}`, url, title, body });
+  };
+  for (const a of appts) {
+    const t = toMinutes(a.time);
+    const extra = a.details ? ` ${a.details}` : '';
+    if (a.date === tomorrow && now(APPT_DAY_BEFORE_AT)) {
+      add(a, 'appt-day-before', `Tomorrow: appointment at ${formatTime(a.time)}`, `${whereAndWhat(a)}.${extra}`);
+    }
+    if (a.date !== date) continue;
+    const soon = Math.max(t - APPT_SOON_BEFORE, QUIET_BEFORE);
+    if (soon < t && now(soon)) {
+      add(a, 'appt-soon', `Appointment today at ${formatTime(a.time)}`, `${whereAndWhat(a)}. Time to get ready.${extra}`);
+    }
+    const after = t + APPT_NOTE_AFTER;
+    if (after <= QUIET_AFTER && now(after) && !hasNote.has(a.id)) {
+      add(
+        a, 'appt-note', `How did it go with ${who(a)}?`,
+        'Open My Pills and tap "Record a note" to save what the doctor said.',
+        `./#record=${a.id}`,
+      );
+    }
+  }
+  return out;
+}

@@ -1,23 +1,37 @@
 // Gloria's screen: what to take now, add something else, warnings, and today's list.
 import { VAPID_PUBLIC_KEY } from './config.js';
-import { isDemo, deviceCode, loadForGloria, tryDeviceCode, logDoses, savePushSubscription, uuid } from './store.js';
+import {
+  isDemo, deviceCode, loadForGloria, tryDeviceCode, logDoses, savePushSubscription, uuid,
+  loadHistory, saveAudioNote, audioNoteUrls,
+} from './store.js';
 import { dueNow, nextUp, dayReport, dateKey, entriesOn, formatTime, formatClock } from './schedule.js';
 import { itemFromMed, itemFromText, checkBasket } from './checks.js';
 import { suggest } from './drugs.js';
+import {
+  splitAppointments, nextAppointment, needsNote, apptName, apptLine, apptWhen, dayLabel, formatDuration,
+  historyDays, startsAt,
+} from './appointments.js';
 
 const app = document.getElementById('app');
 const modalRoot = document.getElementById('modal-root');
 
+const MAX_RECORDING_S = 15 * 60;
+
 const state = {
-  view: 'loading',          // loading | setup | home | add | done | error
+  view: 'loading',          // loading | setup | home | add | done | error | appts | record | saved | history
   settings: {},
   meds: [],
   log: [],
+  appts: [],
   offline: false,
   extras: [],               // things she added with "Take something else"
   unchecked: new Set(),     // due medicines she un-ticked
   justTaken: [],
   modalOpen: false,
+  audioUrls: {},            // voice note id -> playable link
+  playing: null,            // id of the voice note playing now
+  rec: null,                // the recording in progress (see "voice notes" below)
+  hist: null,               // { entries, from, more, loading, error }
 };
 
 const esc = (s) =>
@@ -43,6 +57,7 @@ async function load() {
     state.settings = data.settings || {};
     state.meds = data.medications || [];
     state.log = data.log || [];
+    state.appts = data.appointments || [];
     state.offline = data.offline;
     if (state.view === 'loading' || state.view === 'setup' || state.view === 'error') state.view = 'home';
   } catch (err) {
@@ -55,8 +70,19 @@ async function load() {
       state.error = err.message;
     }
   }
-  render();
+  if (!openFromLink()) render();
   if (!isDemo && 'Notification' in window && Notification.permission === 'granted') subscribeForPush(false);
+}
+
+/** A reminder can open the app at "#record=<appointment id>". */
+function openFromLink() {
+  const m = location.hash.match(/record=([0-9a-f-]{36})/i);
+  if (!m || state.view === 'setup' || state.view === 'error') return false;
+  history.replaceState(null, '', location.pathname);
+  const appt = state.appts.find((a) => a.id === m[1]);
+  if (!appt) return false;
+  startRecordView(appt.id);
+  return true;
 }
 
 // ------------------------------------------------------------------ helpers
@@ -98,6 +124,10 @@ function render() {
   if (state.view === 'add') return renderAdd();
   if (state.view === 'done') return renderDone();
   if (state.view === 'home') return renderHome();
+  if (state.view === 'appts') return renderAppts();
+  if (state.view === 'record') return renderRecord();
+  if (state.view === 'saved') return renderSaved();
+  if (state.view === 'history') return renderHistory();
 }
 
 function renderSetup() {
@@ -167,8 +197,30 @@ function renderHome() {
     </div>`;
   }
 
+  for (const a of needsNote(state.appts, now).slice(0, 1)) {
+    html += `<div class="card appt-card note-ask">
+      <p class="appt-when">${esc(dayLabel(a.date, now))} you saw</p>
+      <p class="appt-name">${esc(apptLine(a))}</p>
+      <button class="btn red" data-action="record" data-id="${esc(a.id)}">🎤 Record a note about it</button>
+    </div>`;
+  }
+  const next = nextAppointment(state.appts, now);
+  if (next) {
+    html += `<button class="card appt-card appt-next" data-action="appts">
+      <span class="appt-label">📅 Next appointment</span>
+      <span class="appt-when">${esc(apptWhen(next, now))}</span>
+      <span class="appt-name">${esc(apptLine(next))}</span>
+      ${next.place ? `<span class="appt-place">${esc(next.place)}</span>` : ''}
+      ${next.details ? `<span class="note">${esc(next.details)}</span>` : ''}
+    </button>`;
+  }
+
   html += `<button class="btn secondary" data-action="add">＋ Take something else</button>`;
   html += renderReminderCard();
+  html += `<div class="two-btns">
+    <button class="btn secondary small" data-action="appts">📅 Appointments</button>
+    <button class="btn secondary small" data-action="history">📋 My history</button>
+  </div>`;
   html += renderToday(now);
   html += `<p class="footer-link"><a href="admin.html">For ${esc(caregiver())}: change the schedule</a></p>`;
   app.innerHTML = html;
@@ -265,6 +317,308 @@ function renderDone() {
   }, 20000);
 }
 
+// ------------------------------------------------------------------ appointments
+function placeLine(a) {
+  return a.place ? `<span class="appt-place">📍 ${esc(a.place)}</span>` : '';
+}
+
+/** Play buttons for an appointment's voice notes. */
+function noteButtons(a) {
+  return (a.audio || [])
+    .map((n, i) => {
+      const on = state.playing === n.id;
+      const url = state.audioUrls[n.id];
+      const many = a.audio.length > 1 ? ` ${i + 1}` : '';
+      const dur = n.duration_s ? ` <span class="dur">${formatDuration(n.duration_s)}</span>` : '';
+      if (!url) {
+        const why = state.urlsStatus === 'error' ? 'needs internet to play' : 'loading…';
+        return `<button class="btn secondary small play" disabled>▶ Note${many} (${why})</button>`;
+      }
+      return `<button class="btn ${on ? 'secondary' : 'blue'} small play" data-action="play" data-id="${esc(n.id)}">
+        ${on ? '■ Stop' : `▶ Play your note${many}`}${dur}</button>`;
+    })
+    .join('');
+}
+
+function apptCard(a, now, { past = false } = {}) {
+  const hasNotes = (a.audio || []).length > 0;
+  const canRecord = past || now >= startsAt(a);
+  return `<div class="card appt-card">
+    <span class="appt-when">${esc(apptWhen(a, now))}</span>
+    <span class="appt-name">${esc(apptLine(a))}</span>
+    ${placeLine(a)}
+    ${a.details ? `<span class="note">${esc(a.details)}</span>` : ''}
+    ${noteButtons(a)}
+    ${canRecord
+      ? `<button class="btn ${hasNotes ? 'secondary small' : 'red'}" data-action="record" data-id="${esc(a.id)}">
+          🎤 ${hasNotes ? 'Record another note' : 'Record a note about it'}</button>`
+      : ''}
+  </div>`;
+}
+
+function renderAppts() {
+  const now = new Date();
+  const { upcoming, past } = splitAppointments(state.appts, now);
+  app.innerHTML = `
+    <button class="link-btn" data-action="home" style="font-size:22px">‹ Back</button>
+    <h2 class="section" style="margin-top:6px">Coming up</h2>
+    ${upcoming.length ? upcoming.map((a) => apptCard(a, now)).join('')
+      : `<div class="card"><p style="margin:0;color:var(--muted)">No appointments coming up.</p></div>`}
+    <h2 class="section">Past appointments</h2>
+    ${past.length ? past.map((a) => apptCard(a, now, { past: true })).join('')
+      : `<div class="card"><p style="margin:0;color:var(--muted)">None yet.</p></div>`}
+    ${state.offline ? `<div class="banner warn">No internet right now. This list may be out of date.</div>` : ''}`;
+}
+
+// ------------------------------------------------------------------ voice notes
+const player = typeof Audio !== 'undefined' ? new Audio() : null;
+if (player) {
+  player.addEventListener('ended', () => {
+    state.playing = null;
+    render();
+  });
+}
+
+function playToggle(id, url) {
+  if (!player) return;
+  if (state.playing === id) return stopPlayback(true);
+  player.src = url;
+  player.play().catch(() => {
+    state.playing = null;
+    render();
+  });
+  state.playing = id;
+  render();
+}
+
+function stopPlayback(rerender = false) {
+  if (player && !player.paused) player.pause();
+  state.playing = null;
+  if (rerender) render();
+}
+
+function loadAudioUrls() {
+  if (!state.appts.some((a) => (a.audio || []).length)) return;
+  state.urlsStatus = 'loading';
+  audioNoteUrls()
+    .then((urls) => {
+      Object.assign(state.audioUrls, urls);
+      state.urlsStatus = 'ok';
+    })
+    .catch(() => {
+      state.urlsStatus = 'error';
+    })
+    .finally(() => {
+      if (state.view === 'appts' || state.view === 'history') render();
+    });
+}
+
+function startRecordView(apptId) {
+  stopPlayback();
+  state.rec = { apptId, phase: 'idle', from: state.view === 'record' ? 'home' : state.view };
+  state.view = 'record';
+  render();
+  window.scrollTo(0, 0);
+}
+
+function renderRecord() {
+  const r = state.rec;
+  const a = state.appts.find((x) => x.id === r?.apptId);
+  if (!r || !a) return go('home');
+  let body = '';
+  if (r.phase === 'idle') {
+    body = `<p class="lead">Tap the red button and say what the doctor told you. Tap <b>Stop</b> when you're done.</p>
+      <button class="btn red rec-btn" data-action="rec-start">● Start recording</button>`;
+  } else if (r.phase === 'starting') {
+    body = `<p class="lead">Getting the microphone ready…</p>`;
+  } else if (r.phase === 'recording') {
+    body = `<div class="rec-live" role="status"><span class="dot" aria-hidden="true"></span> Recording
+        <span id="rec-time">${formatDuration((Date.now() - r.startedAt) / 1000)}</span></div>
+      <button class="btn rec-btn" data-action="rec-stop">■ Stop</button>`;
+  } else if (r.phase === 'recorded') {
+    const on = state.playing === 'rec';
+    body = `<p class="lead">Your note is <b>${formatDuration(r.seconds)}</b> long.</p>
+      <button class="btn ${on ? 'secondary' : 'blue'}" data-action="rec-listen">${on ? '■ Stop' : '▶ Listen to it'}</button>
+      <button class="btn" data-action="rec-save">✓ Save this note</button>
+      <button class="btn secondary small" data-action="rec-again">Record it again</button>`;
+  } else if (r.phase === 'saving') {
+    body = `<p class="lead">Saving your note…</p>`;
+  } else if (r.phase === 'error') {
+    body = `<div class="banner warn" style="font-size:20px">${esc(r.error)}</div>
+      ${r.blob
+        ? `<button class="btn" data-action="rec-save">Try saving again</button>
+           <button class="btn secondary small" data-action="rec-again">Record it again</button>`
+        : `<button class="btn red" data-action="rec-start">● Try again</button>`}`;
+  }
+  app.innerHTML = `
+    <button class="link-btn" data-action="record-cancel" style="font-size:22px">‹ Back</button>
+    <h2 class="section" style="margin-top:6px">Note about your appointment</h2>
+    <div class="card appt-card">
+      <span class="appt-when">${esc(apptWhen(a))}</span>
+      <span class="appt-name">${esc(apptLine(a))}</span>
+    </div>
+    ${body}`;
+}
+
+async function recStart() {
+  const r = state.rec;
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    Object.assign(r, { phase: 'error', blob: null, error: "This phone can't record in the app. Ask " + caregiver() + ' for help.' });
+    return render();
+  }
+  r.phase = 'starting';
+  render();
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch {
+    Object.assign(r, {
+      phase: 'error', blob: null,
+      error: 'The app is not allowed to use the microphone. When it asks, tap Allow. ' +
+        'If it does not ask: Settings → Apps → Safari → Microphone → Allow.',
+    });
+    return render();
+  }
+  if (state.rec !== r) return stream.getTracks().forEach((t) => t.stop()); // she left the screen
+  const mime = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm'].find((t) => MediaRecorder.isTypeSupported?.(t)) || '';
+  const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  recorder.ondataavailable = (e) => e.data && e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    stream.getTracks().forEach((t) => t.stop());
+    clearInterval(r.timer);
+    if (r.discard) return;
+    r.blob = new Blob(chunks, { type: recorder.mimeType || mime || 'audio/mp4' });
+    r.seconds = (Date.now() - r.startedAt) / 1000;
+    if (r.url) URL.revokeObjectURL(r.url);
+    r.url = URL.createObjectURL(r.blob);
+    r.noteId = null;
+    r.phase = r.blob.size ? 'recorded' : 'error';
+    if (!r.blob.size) Object.assign(r, { blob: null, error: 'Nothing was recorded. Please try again.' });
+    if (state.view === 'record' && state.rec === r) render();
+  };
+  Object.assign(r, { recorder, startedAt: Date.now(), phase: 'recording', discard: false });
+  recorder.start(1000);
+  r.timer = setInterval(() => {
+    const s = (Date.now() - r.startedAt) / 1000;
+    const el = document.getElementById('rec-time');
+    if (el) el.textContent = formatDuration(s);
+    if (s >= MAX_RECORDING_S) recStop();
+  }, 500);
+  render();
+}
+
+function recStop(discard = false) {
+  const r = state.rec;
+  if (!r?.recorder || r.recorder.state === 'inactive') return;
+  r.discard = discard;
+  r.recorder.stop();
+}
+
+function recCancel() {
+  const r = state.rec;
+  if (r?.phase === 'recorded' && !confirm('Leave without saving this note?')) return;
+  stopPlayback();
+  recStop(true);
+  state.rec = null;
+  go(r?.from && r.from !== 'record' ? r.from : 'home');
+}
+
+async function recSave() {
+  const r = state.rec;
+  if (!r?.blob) return;
+  stopPlayback();
+  r.phase = 'saving';
+  render();
+  r.noteId ||= uuid(); // same id on retry, so a retry never saves it twice
+  try {
+    await saveAudioNote({ id: r.noteId, appointment_id: r.apptId, blob: r.blob, duration_s: r.seconds });
+    const a = state.appts.find((x) => x.id === r.apptId);
+    if (a) a.audio = [...(a.audio || []), { id: r.noteId, created_at: new Date().toISOString(), duration_s: r.seconds }];
+    state.audioUrls[r.noteId] = r.url;
+    state.rec = null;
+    go('saved');
+  } catch (err) {
+    r.phase = 'error';
+    r.error = navigator.onLine === false
+      ? "Couldn't save: there's no internet. Your recording is kept. Try again when you're connected."
+      : `Couldn't save the note (${err.message}). Your recording is kept. Please try again.`;
+    render();
+  }
+}
+
+function renderSaved() {
+  app.innerHTML = `
+    <div class="done">
+      <div class="check" aria-hidden="true">✓</div>
+      <h2>Note saved!</h2>
+      <p style="color:var(--muted);margin:0 0 16px">You can listen to it any time under Appointments.</p>
+      <button class="btn" data-action="home">OK</button>
+      <button class="btn secondary small" data-action="appts">📅 See appointments</button>
+    </div>`;
+}
+
+// ------------------------------------------------------------------ history
+function openHistory() {
+  stopPlayback();
+  state.hist = { entries: [], from: '', more: true, loading: false, error: '' };
+  go('history');
+  loadAudioUrls();
+  loadMoreHistory();
+}
+
+async function loadMoreHistory() {
+  const h = state.hist;
+  if (!h || h.loading || !h.more) return;
+  h.loading = true;
+  h.error = '';
+  render();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  try {
+    const data = await loadHistory(h.from || dateKey(tomorrow), 60);
+    h.entries.push(...(data.entries || []));
+    h.from = data.from || '';
+    h.more = !!data.more;
+  } catch (err) {
+    h.error = navigator.onLine === false ? 'No internet right now, so only the last two days are shown.' : `Couldn't load your history (${err.message}).`;
+    h.more = false;
+  }
+  h.loading = false;
+  if (state.view === 'history' && state.hist === h) render();
+}
+
+function renderHistory() {
+  const now = new Date();
+  const h = state.hist || { entries: [] };
+  const seen = new Set(h.entries.map((e) => e.id));
+  const entries = [...h.entries, ...state.log.filter((e) => !seen.has(e.id))];
+  const days = historyDays(entries, state.appts, now, h.more ? h.from : '');
+  let html = `<button class="link-btn" data-action="home" style="font-size:22px">‹ Back</button>
+    <h2 class="section" style="margin-top:6px">My history</h2>`;
+  if (h.error) html += `<div class="banner warn">${esc(h.error)}</div>`;
+  for (const day of days) {
+    const rows = day.items.map((it) => {
+      if (it.type === 'appt') {
+        const a = it.appt;
+        return `<li class="appt-row"><span class="when">${formatTime(a.time)}</span>
+          <span class="what">📅 <b>${esc(apptLine(a))}</b>${a.place ? `<br><span class="muted-s">${esc(a.place)}</span>` : ''}</span>
+          ${(a.audio || []).length ? `<div class="row-notes">${noteButtons(a)}</div>` : ''}</li>`;
+      }
+      const e = it.entry;
+      return `<li><span class="when">${formatClock(new Date(e.taken_at))}</span>
+        <span class="what">✓ ${esc(e.name)}${e.amount ? ` <span class="muted-s">(${esc(e.amount)})</span>` : ''}
+        ${e.prescribed ? '' : ' <span class="tag red">not prescribed</span>'}</span></li>`;
+    });
+    html += `<h3 class="hist-day">${esc(dayLabel(day.key, now))}</h3><div class="card"><ul class="today">${rows.join('')}</ul></div>`;
+  }
+  if (h.loading) html += `<p style="color:var(--muted);text-align:center">Loading…</p>`;
+  else if (h.more) html += `<button class="btn secondary small" data-action="hist-more">Show earlier</button>`;
+  else if (!days.length) html += `<div class="card"><p style="margin:0;color:var(--muted)">Nothing yet.</p></div>`;
+  else html += `<p style="color:var(--muted);text-align:center;font-size:18px">That's everything.</p>`;
+  app.innerHTML = html;
+}
+
 // ------------------------------------------------------------------ warning pop-up
 function showWarnings(items, warnings) {
   state.modalOpen = true;
@@ -313,6 +667,7 @@ function closeModal() {
 
 // ------------------------------------------------------------------ actions
 function go(view) {
+  if (state.playing) stopPlayback();
   state.view = view;
   render();
   window.scrollTo(0, 0);
@@ -431,6 +786,23 @@ document.addEventListener('click', async (ev) => {
       return;
     case 'notify': return subscribeForPush(true);
     case 'reload': return load();
+    case 'appts':
+      go('appts');
+      return loadAudioUrls();
+    case 'history': return openHistory();
+    case 'hist-more': return loadMoreHistory();
+    case 'record': return startRecordView(id);
+    case 'record-cancel': return recCancel();
+    case 'rec-start': return recStart();
+    case 'rec-stop': return recStop();
+    case 'rec-again':
+      stopPlayback();
+      state.rec.phase = 'idle';
+      state.rec.blob = null;
+      return recStart();
+    case 'rec-listen': return playToggle('rec', state.rec.url);
+    case 'rec-save': return recSave();
+    case 'play': return playToggle(id, state.audioUrls[id]);
     case 'setup': {
       const input = document.getElementById('code');
       el.disabled = true;
@@ -479,7 +851,20 @@ document.addEventListener('visibilitychange', () => {
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Tapping a reminder while the app is already open.
+  navigator.serviceWorker.addEventListener('message', (ev) => {
+    const url = ev.data && ev.data.open;
+    if (!url || state.modalOpen) return;
+    const hash = new URL(url, location.href).hash;
+    if (hash) {
+      history.replaceState(null, '', location.pathname + hash);
+      openFromLink();
+    }
+  });
 }
+window.addEventListener('hashchange', () => {
+  if (!state.modalOpen) openFromLink();
+});
 
 load();
 // Exposed for the automated screen tests.

@@ -3,14 +3,17 @@ import * as store from './store.js';
 import { describe } from './drugs.js';
 import { checkPrescriptions } from './checks.js';
 import { formatTime, formatClock, dayReport, dateKey, toMinutes } from './schedule.js';
+import { splitAppointments, apptLine, dayLabel, formatDuration } from './appointments.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const dialog = document.getElementById('med-dialog');
 const form = document.getElementById('med-form');
 const f = form.elements;
+const apptDialog = document.getElementById('appt-dialog');
+const apptForm = document.getElementById('appt-form');
 
-const state = { tab: 'schedule', settings: {}, meds: [], log: [], editing: null };
+const state = { tab: 'schedule', settings: {}, meds: [], log: [], appts: [], audioUrls: {}, editing: null, editingAppt: null };
 
 const esc = (s) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
@@ -33,6 +36,8 @@ async function start() {
     state.settings = data.settings;
     state.meds = data.medications;
     state.log = data.log;
+    state.appts = data.appointments || [];
+    refreshAudioUrls();
   } catch (err) {
     main.innerHTML = `<div class="alert danger"><b>Could not load the schedule</b>${esc(err.message)}</div>
       <button class="abtn" data-action="sign-out">Sign out</button>`;
@@ -77,6 +82,7 @@ function render() {
     html += `<div class="banner">Demo mode: changes are saved only in this browser. Open <a href="./">${esc(gloria())}'s screen</a> in this same browser to see them. See README.md to put it online.</div>`;
   }
   if (state.tab === 'schedule') html += renderSchedule();
+  if (state.tab === 'appointments') html += renderAppointments();
   if (state.tab === 'history') html += renderHistory();
   if (state.tab === 'settings') html += renderSettings();
   main.innerHTML = html;
@@ -145,6 +151,118 @@ function renderSchedule() {
       ${state.meds.length ? '' : '<p class="muted">No medicines yet. Click "Add medicine".</p>'}
     </div>`;
 }
+
+// ------------------------------------------------------------------ appointments
+function refreshAudioUrls() {
+  store.adminAudioUrls(state.appts)
+    .then((urls) => {
+      state.audioUrls = urls;
+      if (state.tab === 'appointments') render();
+    })
+    .catch(() => {});
+}
+
+function apptRow(a, now, past) {
+  const notes = (a.audio || [])
+    .map((n) => {
+      const url = state.audioUrls[n.id];
+      const when = new Date(n.created_at);
+      return `<div class="audio-row">
+        ${url ? `<audio controls preload="none" src="${esc(url)}"></audio>` : '<span class="muted">Loading…</span>'}
+        <span class="hint">Recorded ${esc(when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))} at ${formatClock(when)}
+          ${n.duration_s ? ` · ${formatDuration(n.duration_s)}` : ''}</span>
+        <button class="abtn quiet" data-action="delete-note" data-appt="${esc(a.id)}" data-id="${esc(n.id)}">Delete</button>
+      </div>`;
+    })
+    .join('');
+  return `<div class="entry">
+    <span class="t wide">${esc(dayLabel(a.date, now))}<br><span class="muted">${formatTime(a.time)}</span></span>
+    <span class="w"><b>${esc(apptLine(a))}</b>
+      ${a.place ? `<div class="hint">📍 ${esc(a.place)}</div>` : ''}
+      ${a.details ? `<div class="hint">Note for ${esc(gloria())}: ${esc(a.details)}</div>` : ''}
+      ${notes}
+      ${past && !notes ? `<div class="hint">No voice note yet.</div>` : ''}
+    </span>
+    <button class="abtn" data-action="edit-appt" data-id="${esc(a.id)}">Edit</button>
+  </div>`;
+}
+
+function renderAppointments() {
+  const now = new Date();
+  const { upcoming, past } = splitAppointments(state.appts, now);
+  return `
+    <div class="row"><h2 style="margin:8px 0">Appointments</h2><span class="spacer"></span>
+      <button class="abtn primary" data-action="add-appt">＋ Add appointment</button></div>
+    <div class="card">
+      ${upcoming.length ? upcoming.map((a) => apptRow(a, now, false)).join('') : '<p class="muted" style="margin:0">No appointments coming up.</p>'}
+    </div>
+    <h2>Past appointments and ${esc(gloria())}'s voice notes</h2>
+    <div class="card">
+      ${past.length ? past.map((a) => apptRow(a, now, true)).join('') : '<p class="muted" style="margin:0">None yet.</p>'}
+    </div>
+    <p class="hint">${esc(gloria())} records a voice note on her phone after each appointment. They appear here.</p>`;
+}
+
+function openAppt(a) {
+  state.editingAppt = a || null;
+  const e = apptForm.elements;
+  document.getElementById('appt-dialog-title').textContent = a ? 'Edit appointment' : 'Add an appointment';
+  e.date.value = a?.date || '';
+  e.time.value = a?.time || '';
+  e.doctor.value = a?.doctor || '';
+  e.purpose.value = a?.purpose || '';
+  e.place.value = a?.place || '';
+  e.details.value = a?.details || '';
+  document.getElementById('appt-delete').hidden = !a;
+  apptDialog.showModal();
+  if (!a) e.date.focus();
+}
+
+document.getElementById('appt-cancel').addEventListener('click', () => apptDialog.close());
+document.getElementById('appt-delete').addEventListener('click', async () => {
+  const a = state.editingAppt;
+  if (!a) return;
+  const n = (a.audio || []).length;
+  if (!confirm(`Delete this appointment${n ? ` and ${gloria()}'s ${n === 1 ? 'voice note' : n + ' voice notes'}` : ''}? This can't be undone.`)) return;
+  try {
+    await store.deleteAppointment(a);
+    state.appts = state.appts.filter((x) => x.id !== a.id);
+    apptDialog.close();
+    toast('Deleted');
+    render();
+  } catch (err) {
+    alert('Could not delete: ' + err.message);
+  }
+});
+
+apptForm.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  const e = apptForm.elements;
+  if (!e.doctor.value.trim() && !e.purpose.value.trim()) {
+    alert(`Fill in who ${gloria()} is seeing or what it's for.`);
+    return;
+  }
+  const appt = {
+    ...(state.editingAppt || {}),
+    date: e.date.value,
+    time: e.time.value,
+    doctor: e.doctor.value.trim(),
+    purpose: e.purpose.value.trim(),
+    place: e.place.value.trim(),
+    details: e.details.value.trim(),
+  };
+  try {
+    const saved = await store.saveAppointment(appt);
+    const i = state.appts.findIndex((x) => x.id === saved.id);
+    if (i >= 0) state.appts[i] = saved;
+    else state.appts.push(saved);
+    apptDialog.close();
+    toast('Appointment saved');
+    render();
+  } catch (err) {
+    alert('Could not save: ' + err.message);
+  }
+});
 
 function renderHistory() {
   const now = new Date();
@@ -372,6 +490,21 @@ document.addEventListener('click', async (ev) => {
   if (!el) return;
   const { action, id } = el.dataset;
   switch (action) {
+    case 'add-appt': return openAppt(null);
+    case 'edit-appt': return openAppt(state.appts.find((a) => a.id === id));
+    case 'delete-note': {
+      const appt = state.appts.find((a) => a.id === el.dataset.appt);
+      const note = appt?.audio.find((n) => n.id === id);
+      if (!note || !confirm(`Delete this voice note? ${gloria()} won't be able to play it any more. This can't be undone.`)) return;
+      try {
+        await store.deleteAudioNote(note);
+        appt.audio = appt.audio.filter((n) => n.id !== id);
+        toast('Voice note deleted');
+      } catch (err) {
+        alert('Could not delete: ' + err.message);
+      }
+      return render();
+    }
     case 'add-med': return openMed(null);
     case 'edit-med': return openMed(state.meds.find((m) => m.id === id));
     case 'toggle-med': {

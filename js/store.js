@@ -50,7 +50,17 @@ function demoData() {
     };
     writeJSON(DEMO_KEY, data);
   }
+  data.appointments ||= [];
+  data.audio ||= []; // { id, appointment_id, created_at, duration_s, url } (url is a data: URL in demo mode)
   return data;
+}
+
+/** Appointments with their voice notes attached, the shape gloria_data returns. */
+function demoAppointments(d) {
+  return d.appointments.map((a) => ({
+    ...a,
+    audio: d.audio.filter((n) => n.appointment_id === a.id).map(({ url, ...n }) => n),
+  }));
 }
 const saveDemo = (data) => writeJSON(DEMO_KEY, data);
 
@@ -84,7 +94,7 @@ export const deviceCode = {
 export async function loadForGloria() {
   if (isDemo) {
     const d = demoData();
-    return { settings: d.settings, medications: d.medications, log: d.log, offline: false };
+    return { settings: d.settings, medications: d.medications, log: d.log, appointments: demoAppointments(d), offline: false };
   }
   await flushOutbox();
   try {
@@ -141,6 +151,62 @@ export async function savePushSubscription(subscription) {
   check(await sb.rpc('gloria_subscribe', { p_code: deviceCode.get(), p_subscription: subscription }));
 }
 
+/** Her pill log for the `days` days before `beforeKey` ('YYYY-MM-DD', not included), newest first. */
+export async function loadHistory(beforeKey, days = 60) {
+  if (isDemo) {
+    const d = demoData();
+    const entries = d.log.filter((e) => e.local_date < beforeKey).sort((a, b) => (a.taken_at < b.taken_at ? 1 : -1));
+    return { entries, more: false };
+  }
+  const sb = await client();
+  const data = check(await sb.rpc('gloria_history', { p_code: deviceCode.get(), p_before: beforeKey, p_days: days }));
+  if (!data) throw Object.assign(new Error('bad code'), { badCode: true });
+  return data;
+}
+
+async function functionError(error) {
+  try {
+    const body = await error.context.json();
+    return new Error(body.error || error.message);
+  } catch {
+    return new Error(error.message);
+  }
+}
+
+/** Save a voice note she recorded about an appointment. */
+export async function saveAudioNote({ id, appointment_id, blob, duration_s }) {
+  if (isDemo) {
+    const url = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(blob);
+    });
+    const d = demoData();
+    d.audio.push({ id, appointment_id, created_at: new Date().toISOString(), duration_s, url });
+    localStorage.setItem(DEMO_KEY, JSON.stringify(d)); // throws if the browser is out of room
+    return;
+  }
+  const fd = new FormData();
+  fd.append('code', deviceCode.get());
+  fd.append('id', id);
+  fd.append('appointment_id', appointment_id);
+  fd.append('duration_s', String(Math.round(duration_s || 0)));
+  fd.append('file', blob, 'note');
+  const sb = await client();
+  const { error } = await sb.functions.invoke('gloria-notes', { body: fd });
+  if (error) throw await functionError(error);
+}
+
+/** Playable links for all her voice notes: { noteId: url }. */
+export async function audioNoteUrls() {
+  if (isDemo) return Object.fromEntries(demoData().audio.map((n) => [n.id, n.url]));
+  const sb = await client();
+  const { data, error } = await sb.functions.invoke('gloria-notes', { body: { action: 'urls', code: deviceCode.get() } });
+  if (error) throw await functionError(error);
+  return data.urls || {};
+}
+
 // ================================================================ Bonnie's page
 export async function adminSession() {
   if (isDemo) return { email: 'demo' };
@@ -163,7 +229,7 @@ export async function adminSignOut() {
 export async function adminLoad(days = 14) {
   if (isDemo) {
     const d = demoData();
-    return { settings: d.settings, medications: d.medications, log: d.log };
+    return { settings: d.settings, medications: d.medications, log: d.log, appointments: demoAppointments(d) };
   }
   const sb = await client();
   const since = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
@@ -171,7 +237,66 @@ export async function adminLoad(days = 14) {
   if (!settings) throw new Error('Your account is not on the caregiver list. See README, step 4.');
   const medications = check(await sb.from('medications').select('*').order('sort').order('name'));
   const log = check(await sb.from('dose_log').select('*').gte('taken_at', since).order('taken_at'));
-  return { settings, medications, log };
+  const appointments = check(
+    await sb.from('appointments').select('*, audio:audio_notes(*)').order('date').order('time')
+  ).map((a) => ({ ...a, audio: (a.audio || []).sort((x, y) => (x.created_at < y.created_at ? -1 : 1)) }));
+  return { settings, medications, log, appointments };
+}
+
+const APPT_FIELDS = ['date', 'time', 'doctor', 'purpose', 'place', 'details'];
+
+export async function saveAppointment(appt) {
+  const row = Object.fromEntries(APPT_FIELDS.map((k) => [k, appt[k] ?? '']));
+  row.id = appt.id || uuid();
+  row.updated_at = new Date().toISOString();
+  if (isDemo) {
+    const d = demoData();
+    const i = d.appointments.findIndex((a) => a.id === row.id);
+    if (i >= 0) d.appointments[i] = row;
+    else d.appointments.push(row);
+    saveDemo(d);
+    return demoAppointments(d).find((a) => a.id === row.id);
+  }
+  const sb = await client();
+  return check(await sb.from('appointments').upsert(row).select('*, audio:audio_notes(*)').single());
+}
+
+/** Deletes the appointment and its voice notes. */
+export async function deleteAppointment(appt) {
+  if (isDemo) {
+    const d = demoData();
+    d.appointments = d.appointments.filter((a) => a.id !== appt.id);
+    d.audio = d.audio.filter((n) => n.appointment_id !== appt.id);
+    saveDemo(d);
+    return;
+  }
+  const sb = await client();
+  const paths = (appt.audio || []).map((n) => n.path).filter(Boolean);
+  if (paths.length) check(await sb.storage.from('audio-notes').remove(paths));
+  check(await sb.from('appointments').delete().eq('id', appt.id));
+}
+
+export async function deleteAudioNote(note) {
+  if (isDemo) {
+    const d = demoData();
+    d.audio = d.audio.filter((n) => n.id !== note.id);
+    saveDemo(d);
+    return;
+  }
+  const sb = await client();
+  if (note.path) check(await sb.storage.from('audio-notes').remove([note.path]));
+  check(await sb.from('audio_notes').delete().eq('id', note.id));
+}
+
+/** Playable links for voice notes, for Bonnie: { noteId: url }. */
+export async function adminAudioUrls(appointments) {
+  if (isDemo) return Object.fromEntries(demoData().audio.map((n) => [n.id, n.url]));
+  const notes = appointments.flatMap((a) => a.audio || []);
+  if (!notes.length) return {};
+  const sb = await client();
+  const signed = check(await sb.storage.from('audio-notes').createSignedUrls(notes.map((n) => n.path), 6 * 3600));
+  const byPath = new Map(signed.map((s) => [s.path, s.signedUrl]));
+  return Object.fromEntries(notes.map((n) => [n.id, byPath.get(n.path)]).filter(([, u]) => u));
 }
 
 export async function saveMedication(med) {

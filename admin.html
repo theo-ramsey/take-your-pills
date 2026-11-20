@@ -14,6 +14,7 @@
       <h1 id="title">Medicine schedule</h1>
       <nav id="nav" hidden>
         <button data-tab="schedule" class="active">Schedule</button>
+        <button data-tab="appointments">Appointments</button>
         <button data-tab="history">History</button>
         <button data-tab="settings">Settings</button>
         <button data-action="sign-out" id="sign-out">Sign out</button>
@@ -71,6 +72,46 @@
         <button type="button" class="abtn danger" id="med-delete">Delete</button>
         <span class="spacer"></span>
         <button type="button" class="abtn" id="med-cancel">Cancel</button>
+        <button type="submit" class="abtn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="appt-dialog">
+    <form id="appt-form" method="dialog">
+      <h2 id="appt-dialog-title">Appointment</h2>
+      <div class="form-grid">
+        <div>
+          <label for="a-date">Date</label>
+          <input type="date" id="a-date" name="date" required>
+        </div>
+        <div>
+          <label for="a-time">Time</label>
+          <input type="time" id="a-time" name="time" required>
+        </div>
+        <div class="full hint" style="margin-top:-6px">In Gloria's time zone. She gets a reminder at 4 PM the day before, 2 hours before,
+          and 1 hour after it starts (to record a voice note).</div>
+        <div>
+          <label for="a-doctor">Who she's seeing</label>
+          <input type="text" id="a-doctor" name="doctor" autocomplete="off" placeholder="e.g. Dr. Patel">
+        </div>
+        <div>
+          <label for="a-purpose">What it's for</label>
+          <input type="text" id="a-purpose" name="purpose" autocomplete="off" placeholder="e.g. Heart check-up">
+        </div>
+        <div class="full">
+          <label for="a-place">Where</label>
+          <input type="text" id="a-place" name="place" autocomplete="off" placeholder="e.g. Main Street Clinic, 2nd floor">
+        </div>
+        <div class="full">
+          <label for="a-details">Note for Gloria</label>
+          <input type="text" id="a-details" name="details" autocomplete="off" placeholder="e.g. Bring your medicine list. Don't eat after midnight.">
+        </div>
+      </div>
+      <div class="row" style="margin-top:18px">
+        <button type="button" class="abtn danger" id="appt-delete">Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="abtn" id="appt-cancel">Cancel</button>
         <button type="submit" class="abtn primary">Save</button>
       </div>
     </form>

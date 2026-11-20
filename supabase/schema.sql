@@ -64,6 +64,36 @@ create table if not exists reminders_sent (
   primary key (local_date, time, kind)
 );
 
+-- Medical appointments. Date and time are wall-clock, in Gloria's time zone.
+create table if not exists appointments (
+  id uuid primary key default gen_random_uuid(),
+  date text not null,                            -- 'YYYY-MM-DD'
+  time text not null,                            -- 'HH:MM'
+  doctor text not null default '',               -- who she is seeing
+  purpose text not null default '',              -- what it's for
+  place text not null default '',
+  details text not null default '',              -- e.g. "Bring your medicine list"
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+create index if not exists appointments_date on appointments (date);
+
+-- Voice notes Gloria records after an appointment. The audio itself is in the
+-- private "audio-notes" storage bucket.
+create table if not exists audio_notes (
+  id uuid primary key,                           -- made on the phone, so retries don't double up
+  appointment_id uuid not null references appointments(id) on delete cascade,
+  path text not null,
+  mime text not null default '',
+  duration_s numeric,
+  created_at timestamptz not null default now()
+);
+create index if not exists audio_notes_appointment on audio_notes (appointment_id);
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('audio-notes', 'audio-notes', false, 26214400)
+on conflict (id) do nothing;
+
 -- ---------------------------------------------------------------- security
 alter table settings enable row level security;
 alter table caregivers enable row level security;
@@ -71,6 +101,8 @@ alter table medications enable row level security;
 alter table dose_log enable row level security;
 alter table push_subscriptions enable row level security;
 alter table reminders_sent enable row level security;
+alter table appointments enable row level security;
+alter table audio_notes enable row level security;
 
 create or replace function is_caregiver() returns boolean
 language sql stable security definer set search_path = public as $$
@@ -85,6 +117,18 @@ drop policy if exists caregivers_all on medications;
 create policy caregivers_all on medications for all to authenticated using (is_caregiver()) with check (is_caregiver());
 drop policy if exists caregivers_all on dose_log;
 create policy caregivers_all on dose_log for all to authenticated using (is_caregiver()) with check (is_caregiver());
+drop policy if exists caregivers_all on appointments;
+create policy caregivers_all on appointments for all to authenticated using (is_caregiver()) with check (is_caregiver());
+drop policy if exists caregivers_all on audio_notes;
+create policy caregivers_all on audio_notes for all to authenticated using (is_caregiver()) with check (is_caregiver());
+
+-- Caregivers can play and delete voice notes. Gloria's phone goes through the gloria-notes function.
+drop policy if exists audio_notes_caregivers_read on storage.objects;
+create policy audio_notes_caregivers_read on storage.objects for select to authenticated
+  using (bucket_id = 'audio-notes' and public.is_caregiver());
+drop policy if exists audio_notes_caregivers_delete on storage.objects;
+create policy audio_notes_caregivers_delete on storage.objects for delete to authenticated
+  using (bucket_id = 'audio-notes' and public.is_caregiver());
 -- caregivers, push_subscriptions and reminders_sent have no policies: only the functions below and
 -- the reminder sender (service role) can touch them.
 
@@ -113,7 +157,32 @@ begin
       from settings where id = 1),
     'medications', coalesce((select json_agg(m order by m.sort, m.name) from medications m where m.active), '[]'::json),
     'log', coalesce((select json_agg(l order by l.taken_at) from dose_log l
-                     where l.taken_at > now() - interval '2 days'), '[]'::json)
+                     where l.taken_at > now() - interval '2 days'), '[]'::json),
+    'appointments', coalesce((select json_agg(json_build_object(
+        'id', a.id, 'date', a.date, 'time', a.time, 'doctor', a.doctor, 'purpose', a.purpose,
+        'place', a.place, 'details', a.details,
+        'audio', coalesce((select json_agg(json_build_object('id', n.id, 'created_at', n.created_at, 'duration_s', n.duration_s)
+                                    order by n.created_at) from audio_notes n where n.appointment_id = a.id), '[]'::json)
+      ) order by a.date, a.time) from appointments a), '[]'::json)
+  );
+end;
+$$;
+
+-- Her pill history, 60 days at a time, newest first. p_before is a 'YYYY-MM-DD' day (not included).
+create or replace function gloria_history(p_code text, p_before text, p_days int default 60) returns json
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_from text;
+begin
+  if not gloria_code_ok(p_code) then
+    return null;
+  end if;
+  v_from := to_char(p_before::date - greatest(1, least(p_days, 366)), 'YYYY-MM-DD');
+  return json_build_object(
+    'from', v_from,
+    'entries', coalesce((select json_agg(l order by l.taken_at desc) from dose_log l
+                         where l.local_date < p_before and l.local_date >= v_from), '[]'::json),
+    'more', exists (select 1 from dose_log where local_date < v_from)
   );
 end;
 $$;
@@ -151,5 +220,7 @@ begin
 end;
 $$;
 
-revoke execute on function gloria_data(text), gloria_log(text, jsonb), gloria_subscribe(text, jsonb), gloria_code_ok(text) from public;
-grant execute on function gloria_data(text), gloria_log(text, jsonb), gloria_subscribe(text, jsonb) to anon, authenticated;
+revoke execute on function gloria_data(text), gloria_log(text, jsonb), gloria_subscribe(text, jsonb), gloria_code_ok(text),
+  gloria_history(text, text, int) from public;
+grant execute on function gloria_data(text), gloria_log(text, jsonb), gloria_subscribe(text, jsonb),
+  gloria_history(text, text, int) to anon, authenticated;

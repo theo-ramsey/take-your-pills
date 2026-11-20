@@ -161,6 +161,39 @@ input.big:focus { outline: none; border-color: var(--blue); }
 .done ul { list-style: none; padding: 0; font-size: 22px; }
 .done li { padding: 6px 0; }
 
+/* Appointments, voice notes, history */
+.appt-card { display: block; width: 100%; text-align: left; border-color: #c9d6f0; }
+button.appt-card { font-size: inherit; cursor: pointer; }
+.appt-card > span { display: block; }
+.appt-card .appt-label { font-size: 18px; font-weight: 700; color: var(--blue); margin-bottom: 4px; }
+.appt-card .appt-when { font-size: 24px; font-weight: 700; margin: 0; }
+.appt-card .appt-name { font-size: 22px; margin: 2px 0 0; }
+.appt-card .appt-place { font-size: 19px; color: var(--muted); margin-top: 4px; }
+.appt-card .note {
+  display: inline-block; font-size: 18px; margin-top: 8px; background: var(--amber-soft); color: var(--amber);
+  padding: 4px 10px; border-radius: 8px;
+}
+.appt-card p { margin: 0; }
+.note-ask { border-color: var(--red); }
+.note-ask .appt-when { font-size: 20px; font-weight: 600; color: var(--muted); }
+.two-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.two-btns .btn { margin: 4px 0; padding: 10px; }
+.btn.play { margin: 10px 0 0; }
+.btn .dur { font-weight: 500; opacity: 0.85; }
+.rec-btn { min-height: 96px; font-size: 30px; }
+.rec-live {
+  display: flex; align-items: center; justify-content: center; gap: 12px; font-size: 28px; font-weight: 700;
+  color: var(--red); margin: 24px 0 8px;
+}
+.rec-live #rec-time { font-variant-numeric: tabular-nums; color: var(--text); }
+.rec-live .dot { width: 22px; height: 22px; border-radius: 50%; background: var(--red); animation: pulse 1.2s infinite; }
+@keyframes pulse { 50% { opacity: 0.25; } }
+.gloria .lead { font-size: 22px; margin: 14px 0; }
+.hist-day { font-size: 22px; margin: 22px 0 8px; }
+.muted-s { color: var(--muted); font-size: 18px; }
+.today li.appt-row { flex-wrap: wrap; }
+.today li.appt-row .row-notes { flex-basis: 100%; }
+
 .footer-link { text-align: center; margin: 36px 0 8px; font-size: 16px; color: var(--muted); }
 .footer-link a { color: var(--muted); }
 
@@ -221,7 +254,7 @@ body.admin { font-size: 17px; }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
 .admin label { display: block; font-weight: 600; font-size: 15px; margin-bottom: 4px; }
 .admin input[type=text], .admin input[type=email], .admin input[type=password], .admin input[type=tel],
-.admin input[type=number], .admin input[type=time], .admin select, .admin textarea {
+.admin input[type=number], .admin input[type=time], .admin input[type=date], .admin select, .admin textarea {
   width: 100%; padding: 10px 12px; border: 1px solid #c9c3b6; border-radius: 10px; background: #fff; min-height: 44px;
 }
 .admin .hint { font-size: 14px; color: var(--muted); margin-top: 4px; }
@@ -248,6 +281,9 @@ dialog h2 { margin-top: 0 !important; }
 .entry .t { flex: 0 0 82px; font-variant-numeric: tabular-nums; color: var(--muted); }
 .entry .w { flex: 1; min-width: 200px; }
 .entry .warns { font-size: 14px; color: var(--red); }
+.entry .t.wide { flex-basis: 150px; color: var(--text); font-weight: 600; }
+.audio-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.audio-row audio { height: 36px; max-width: 100%; }
 .code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 26px; letter-spacing: 3px;
   background: #fff; border: 2px dashed var(--line); border-radius: 12px; padding: 10px 14px; display: inline-block;

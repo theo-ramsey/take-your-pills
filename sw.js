@@ -1,9 +1,9 @@
 // Service worker: shows reminder notifications and lets the app open without internet.
-const CACHE = 'typ-v1';
+const CACHE = 'typ-v2';
 const FILES = [
   './', 'index.html', 'admin.html', 'css/app.css', 'manifest.webmanifest',
   'js/gloria.js', 'js/admin.js', 'js/store.js', 'js/config.js', 'js/drugs.js', 'js/checks.js',
-  'js/schedule.js', 'js/examples.js', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
+  'js/schedule.js', 'js/examples.js', 'js/appointments.js', 'icons/icon-192.png', 'icons/apple-touch-icon.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -49,18 +49,22 @@ self.addEventListener('push', (event) => {
       icon: 'icons/icon-192.png',
       badge: 'icons/icon-192.png',
       requireInteraction: true,
-      data: { url: './' },
+      data: { url: data.url || './' },
     })
   );
 });
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || './', self.registration.scope).href;
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((wins) => {
       const existing = wins.find((w) => new URL(w.url).pathname.endsWith('/') || w.url.includes('index.html'));
-      if (existing) return existing.focus();
-      return self.clients.openWindow('./');
+      if (existing) {
+        existing.postMessage({ open: url }); // the app opens the right screen
+        return existing.focus();
+      }
+      return self.clients.openWindow(url);
     })
   );
 });
